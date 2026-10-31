@@ -2,7 +2,10 @@ gatewayPort: "8080"
 services:
   - name: "user-service"
     path: "/users/"
-    backendURL: "http://localhost:8081"
+    backends:
+      - "http://localhost:8081"
+      - "http://localhost:8082"
   - name: "product-service"
     path: "/products/"
-    backendURL: "http://localhost:8083"
+    backends:
+      - "http://localhost:8083"

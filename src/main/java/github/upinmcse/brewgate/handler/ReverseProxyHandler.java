@@ -2,6 +2,8 @@ package github.upinmcse.brewgate.handler;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
+import github.upinmcse.brewgate.loadbalancer.Backend;
+import github.upinmcse.brewgate.loadbalancer.ServerPool;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -19,7 +21,7 @@ import java.util.logging.Logger;
 public class ReverseProxyHandler implements HttpHandler {
 
     private HttpClient httpClient;
-    private String backendUrl;
+    private ServerPool serverPool;
 
     private static final Logger LOG = Logger.getLogger(ReverseProxyHandler.class.getName());
 
@@ -36,10 +38,8 @@ public class ReverseProxyHandler implements HttpHandler {
             "content-length"
     );
 
-    public ReverseProxyHandler(String backendUrl){
-        this.backendUrl = backendUrl.endsWith("/")
-                ? backendUrl.substring(0, backendUrl.length() -1)
-                : backendUrl;
+    public ReverseProxyHandler(ServerPool serverPool){
+        this.serverPool = serverPool;
 
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(5))
@@ -49,8 +49,15 @@ public class ReverseProxyHandler implements HttpHandler {
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
+        Backend backend = serverPool.getNextBackend();
+        if (backend == null) {
+            LOG.warning("[Proxy] No healthy backends available for this route!");
+            sendErrorResponse(exchange, 503, "503 Service Unavailable: No healthy backends");
+            return;
+        }
+
         try{
-            HttpRequest backendRequest = buildBackendRequest(exchange);
+            HttpRequest backendRequest = buildBackendRequest(exchange, backend.getUri());
 
             HttpResponse<InputStream> backendResponse = httpClient.send(
                     backendRequest,
@@ -64,18 +71,19 @@ public class ReverseProxyHandler implements HttpHandler {
                     backendRequest.uri(), backendResponse.statusCode()));
 
         }catch (Exception e){
-            LOG.warning("[Proxy Error] Cannot forward request: " + e.getMessage());
+            LOG.warning(String.format("[Passive Health Check] Backend %s failed: %s. Marking as DEAD.%n", backend.getUri(), e.getMessage()));
+            backend.setAlive(false);
             sendErrorResponse(exchange, 502, "502 Bad Gateway: " + e.getMessage());
         }
     }
 
-    private HttpRequest buildBackendRequest(HttpExchange exchange) {
+    private HttpRequest buildBackendRequest(HttpExchange exchange, URI backendBaseUri) {
         URI requestURI = exchange.getRequestURI();
         String pathAndQuery = requestURI.getRawPath();
         if (requestURI.getRawQuery() != null) {
             pathAndQuery += "?" + requestURI.getRawQuery();
         }
-        URI targetUri = URI.create(this.backendUrl + pathAndQuery);
+        URI targetUri = URI.create(backendBaseUri + pathAndQuery);
 
         HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                 .uri(targetUri)

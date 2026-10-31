@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpServer;
 import github.upinmcse.brewgate.config.GatewayConfig;
 import github.upinmcse.brewgate.config.ServiceConfig;
 import github.upinmcse.brewgate.handler.ReverseProxyHandler;
+import github.upinmcse.brewgate.loadbalancer.ServerPool;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.Constructor;
@@ -44,11 +45,21 @@ public class BrewGate {
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
         for (ServiceConfig svc: gatewayConfig.getServices()){
-            server.createContext(svc.getPath(), new ReverseProxyHandler(svc.getBackendURL()));
-            LOG.info(String.format("Register route successful: %s -> %s%n", svc.getPath(), svc.getBackendURL()));
+            ServerPool pool = new ServerPool();
+            if (svc.getBackends() != null) {
+                for (int i = 0; i < svc.getBackends().size(); i++) {
+                    String backendUrl = svc.getBackends().get(i);
+                    String backendId = String.format("%s-%d", svc.getName(), i + 1);
+                    pool.addBackend(backendId, backendUrl);
+                }
+            }
+
+            server.createContext(svc.getPath(), new ReverseProxyHandler(pool));
+            LOG.info(String.format("Registered route: %s (%d backends)%n",
+                    svc.getPath(), svc.getBackends() != null ? svc.getBackends().size() : 0));
         }
 
-        LOG.info("JavaGate listening on port : " + port);
+        LOG.info("BrewGate listening on port : " + port);
         server.start();
     }
 }

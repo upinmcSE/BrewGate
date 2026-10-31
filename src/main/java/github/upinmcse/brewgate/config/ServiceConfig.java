@@ -5,14 +5,14 @@ import java.util.List;
 public class ServiceConfig {
     private String name;
     private String path;
-    private String backendURL;
+    private List<String> backends;
 
     public ServiceConfig(){}
 
-    public ServiceConfig(String name, String path, String backendURL){
+    public ServiceConfig(String name, String path, List<String> backends){
         this.name = name;
         this.path = path;
-        this.backendURL = backendURL;
+        this.backends = backends;
     }
 
     public String getName() {
@@ -31,11 +31,11 @@ public class ServiceConfig {
         this.path = path;
     }
 
-    public String getBackendURL() {
-        return backendURL;
+    public List<String> getBackends() {
+        return backends;
     }
 
-    public void setBackendURL(String backendURL) {
-        this.backendURL = backendURL;
+    public void setBackends(List<String> backends) {
+        this.backends = backends;
     }
 }
