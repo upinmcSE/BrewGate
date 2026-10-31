@@ -2,10 +2,7 @@ gatewayPort: "8080"
 services:
   - name: "user-service"
     path: "/users/"
-    backends:
-      - "http://localhost:8081"
-      - "http://localhost:8082"
+    consulServiceName: "user-service"
   - name: "product-service"
     path: "/products/"
-    backends:
-      - "http://localhost:8083"
+    consulServiceName: "product-service"

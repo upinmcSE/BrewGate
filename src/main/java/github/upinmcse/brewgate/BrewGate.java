@@ -5,6 +5,7 @@ import github.upinmcse.brewgate.config.GatewayConfig;
 import github.upinmcse.brewgate.config.ServiceConfig;
 import github.upinmcse.brewgate.handler.ReverseProxyHandler;
 import github.upinmcse.brewgate.loadbalancer.ServerPool;
+import org.kiwiproject.consul.Consul;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.Constructor;
@@ -37,7 +38,12 @@ public class BrewGate {
 
         if (gatewayConfig == null || gatewayConfig.getServices() == null) {
             LOG.warning("Config file is empty or invalid!");
+            return;
         }
+
+        Consul consul = Consul.builder()
+                .withUrl("http://localhost:8500")
+                .build();
 
         int port = Integer.parseInt(Objects.requireNonNull(gatewayConfig).getGatewayPort());
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
@@ -45,18 +51,16 @@ public class BrewGate {
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
         for (ServiceConfig svc: gatewayConfig.getServices()){
-            ServerPool pool = new ServerPool();
-            if (svc.getBackends() != null) {
-                for (int i = 0; i < svc.getBackends().size(); i++) {
-                    String backendUrl = svc.getBackends().get(i);
-                    String backendId = String.format("%s-%d", svc.getName(), i + 1);
-                    pool.addBackend(backendId, backendUrl);
-                }
+            if (svc.getConsulServiceName() == null || svc.getConsulServiceName().isBlank()) {
+                System.out.printf("Skipping service '%s': missing 'consulServiceName'%n", svc.getName());
+                continue;
             }
+            ServerPool pool = new ServerPool();
+            pool.startConsulWatcher(consul, svc.getConsulServiceName());
 
             server.createContext(svc.getPath(), new ReverseProxyHandler(pool));
-            LOG.info(String.format("Registered route: %s (%d backends)%n",
-                    svc.getPath(), svc.getBackends() != null ? svc.getBackends().size() : 0));
+            LOG.info(String.format("Registered route: %s -> Consul Service: '%s'%n",
+                    svc.getPath(), svc.getConsulServiceName()));
         }
 
         LOG.info("BrewGate listening on port : " + port);

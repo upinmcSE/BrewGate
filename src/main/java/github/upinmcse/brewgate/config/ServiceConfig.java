@@ -5,37 +5,24 @@ import java.util.List;
 public class ServiceConfig {
     private String name;
     private String path;
-    private List<String> backends;
-
-    public ServiceConfig(){}
-
-    public ServiceConfig(String name, String path, List<String> backends){
-        this.name = name;
-        this.path = path;
-        this.backends = backends;
-    }
-
+    private String consulServiceName;
+    public ServiceConfig() {}
     public String getName() {
         return name;
     }
-
     public void setName(String name) {
         this.name = name;
     }
-
     public String getPath() {
         return path;
     }
-
     public void setPath(String path) {
         this.path = path;
     }
-
-    public List<String> getBackends() {
-        return backends;
+    public String getConsulServiceName() {
+        return consulServiceName;
     }
-
-    public void setBackends(List<String> backends) {
-        this.backends = backends;
+    public void setConsulServiceName(String consulServiceName) {
+        this.consulServiceName = consulServiceName;
     }
 }
