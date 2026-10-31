@@ -1,0 +1,5 @@
+gatewayPort: "8080"
+services:
+  - name: "user-service"
+    path: "/api/v2/users/"
+    consulServiceName: "user-service"

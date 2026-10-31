@@ -1,0 +1,15 @@
+version: '3.8'
+
+networks:
+  brew-net:
+    driver: bridge # private, internal virtual network
+
+services:
+  consul:
+    image: hashicorp/consul:latest
+    container_name: consul
+    ports:
+      - "8500:8500"
+    command: "agent -dev -client 0.0.0.0"
+    networks:
+      - brew-net

@@ -156,7 +156,7 @@ public class ServerPool implements AutoCloseable{
     }
 
     @Override
-    public void close() throws Exception {
+    public void close() {
         isRunning.set(false);
     }
 }
