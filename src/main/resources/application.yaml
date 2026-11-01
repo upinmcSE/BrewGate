@@ -21,3 +21,8 @@ redis:
   address: "redis:6379"
   password: ""
   db: 0
+tls:
+  enabled: false
+  httpsPort: "8443" # This will be the main HTTPS port
+  certFile: "./config/cert.pem"
+  keyFile: "./config/key.pem"

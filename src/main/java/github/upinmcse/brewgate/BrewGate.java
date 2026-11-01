@@ -2,10 +2,13 @@ package github.upinmcse.brewgate;
 
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
 import github.upinmcse.brewgate.config.ConsulConfigManager;
 import github.upinmcse.brewgate.config.GatewayConfig;
 import github.upinmcse.brewgate.config.RedisConfig;
 import github.upinmcse.brewgate.config.ServiceConfig;
+import github.upinmcse.brewgate.config.TlsManager;
 import github.upinmcse.brewgate.handler.ReverseProxyHandler;
 import github.upinmcse.brewgate.helper.GatewayHelper;
 import github.upinmcse.brewgate.loadbalancer.ServerPool;
@@ -24,6 +27,7 @@ import org.yaml.snakeyaml.constructor.Constructor;
 import redis.clients.jedis.DefaultJedisClientConfig;
 import redis.clients.jedis.RedisClient;
 
+import javax.net.ssl.SSLContext;
 import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -89,12 +93,25 @@ public class BrewGate {
             );
         }
 
-        int port = Integer.parseInt(currentConfig.getGatewayPort());
-        HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
-        server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+        // 1. Create the root handler: routes each request to the matching backend handler
+        HttpHandler rootHandler = exchange -> {
+            RouterState currentRouter = globalRouter.get();
+            if (currentRouter == null) {
+                GatewayHelper.sendErrorResponse(exchange, 503, "503 Service Unavailable: Gateway is initializing");
+                return;
+            }
+            String path = exchange.getRequestURI().getPath();
+            HttpHandler handler = currentRouter.match(path);
+            if (handler != null) {
+                handler.handle(exchange);
+            } else {
+                GatewayHelper.sendErrorResponse(exchange, 404, "404 Not Found: No matching route for " + path);
+            }
+        };
 
-        // Endpoint /metrics
-        server.createContext("/metrics", exchange -> {
+        // 2. Create the handler that serves /metrics
+        HttpHandler metricsHandler = exchange -> {
+            // Prometheus scrapes with GET only; reject any other method
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(405, -1);
                 return;
@@ -106,29 +123,40 @@ public class BrewGate {
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(responseBytes);
             }
-        });
+        };
 
-        log.info("Prometheus metrics endpoint exposed at http://localhost:{}/metrics", port);
+        // 3. Start the server: supports both TLS (HTTPS) and non-TLS (HTTP) modes
+        if (currentConfig.getTlsConfig() != null && currentConfig.getTlsConfig().isEnabled()) {
+            int httpPort = Integer.parseInt(currentConfig.getGatewayPort());
+            int httpsPort = Integer.parseInt(currentConfig.getTlsConfig().getHttpsPort());
 
-        // Dynamic Router Handler
-        server.createContext("/", exchange -> {
-            RouterState currentRouter = globalRouter.get();
-            if (currentRouter == null) {
-                GatewayHelper.sendErrorResponse(exchange, 503, "503 Service Unavailable: Gateway is initializing");
-                return;
-            }
+            // A. Start the HTTP redirect server in the background
+            TlsManager.startHttpToHttpsRedirectServer(httpPort, String.valueOf(httpsPort));
 
-            String path = exchange.getRequestURI().getPath();
-            HttpHandler handler = currentRouter.match(path);
-            if (handler != null) {
-                handler.handle(exchange);
-            } else {
-                GatewayHelper.sendErrorResponse(exchange, 404, "404 Not Found: No matching route for " + path);
-            }
-        });
+            // B. Start the main HTTPS server
+            SSLContext sslContext = TlsManager.createSSLContext(
+                    currentConfig.getTlsConfig().getCertFile(),
+                    currentConfig.getTlsConfig().getKeyFile()
+            );
 
-        log.info("BrewGate listening on port :{}", port);
-        server.start();
+            HttpsServer httpsServer = HttpsServer.create(new InetSocketAddress(httpsPort), 0);
+            httpsServer.setHttpsConfigurator(new HttpsConfigurator(sslContext));
+            httpsServer.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+            httpsServer.createContext("/metrics", metricsHandler);
+            httpsServer.createContext("/", rootHandler);
+
+            log.info("JavaGate (HTTPS) listening on port :{}", httpsPort);
+            httpsServer.start();
+        } else {
+            // Plain HTTP mode
+            int port = Integer.parseInt(currentConfig.getGatewayPort());
+            HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
+            server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+            server.createContext("/metrics", metricsHandler);
+            server.createContext("/", rootHandler);
+            log.info("JavaGate (HTTP) listening on port :{}", port);
+            server.start();
+        }
     }
 
     private static RouterState buildRouter(GatewayConfig gatewayConfig, Consul consul) {

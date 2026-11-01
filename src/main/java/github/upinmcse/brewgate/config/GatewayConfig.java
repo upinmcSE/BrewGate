@@ -7,13 +7,9 @@ public class GatewayConfig {
     private List<ServiceConfig> services;
     private AuthConfig authentication;
     private RedisConfig redis;
+    private TLSConfig tlsConfig;
 
     public GatewayConfig(){}
-
-    public GatewayConfig(String gatewayPort, List<ServiceConfig> services){
-        this.gatewayPort = gatewayPort;
-        this.services = services;
-    }
 
     public String getGatewayPort() {
         return gatewayPort;
@@ -45,5 +41,13 @@ public class GatewayConfig {
 
     public void setRedis(RedisConfig redis) {
         this.redis = redis;
+    }
+
+    public TLSConfig getTlsConfig() {
+        return tlsConfig;
+    }
+
+    public void setTlsConfig(TLSConfig tlsConfig) {
+        this.tlsConfig = tlsConfig;
     }
 }

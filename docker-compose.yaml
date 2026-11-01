@@ -14,6 +14,24 @@ services:
     networks:
       - brew-net
 
+  brewgate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: javagate
+    restart: always
+    ports:
+      - "8080:8080"   # HTTP (Redirect)
+      - "8443:8443"   # HTTPS (Main Gateway)
+    volumes:
+      - ./config:/app/config
+      - ./certs:/app/certs
+    depends_on:
+      - consul
+      - redis
+    networks:
+      - brew-net
+
   redis:
     image: redis:7-alpine
     container_name: redis
