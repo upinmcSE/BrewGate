@@ -2,6 +2,7 @@ package github.upinmcse.brewgate.handler;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
+import github.upinmcse.brewgate.helper.GatewayHelper;
 import github.upinmcse.brewgate.loadbalancer.Backend;
 import github.upinmcse.brewgate.loadbalancer.ServerPool;
 import org.slf4j.Logger;
@@ -53,7 +54,7 @@ public class ReverseProxyHandler implements HttpHandler {
         Backend backend = serverPool.getNextBackend();
         if (backend == null) {
             log.warn("No healthy backends available for path: {}", exchange.getRequestURI().getPath());
-            sendErrorResponse(exchange, 503, "503 Service Unavailable: No healthy backends");
+            GatewayHelper.sendErrorResponse(exchange, 503, "503 Service Unavailable: No healthy backends");
             return;
         }
 
@@ -74,7 +75,7 @@ public class ReverseProxyHandler implements HttpHandler {
         }catch (Exception e){
             log.error("Backend {} connection failed: {}. Marking as DEAD.", backend.getUri(), e.getMessage());
             backend.setAlive(false);
-            sendErrorResponse(exchange, 502, "502 Bad Gateway: " + e.getMessage());
+            GatewayHelper.sendErrorResponse(exchange, 502, "502 Bad Gateway: " + e.getMessage());
         }
     }
 
@@ -135,11 +136,4 @@ public class ReverseProxyHandler implements HttpHandler {
         }
     }
 
-    private void sendErrorResponse(HttpExchange exchange, int statusCode, String message) throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", "text/plain");
-        exchange.sendResponseHeaders(statusCode, message.getBytes().length);
-        try (OutputStream os = exchange.getResponseBody()) {
-            os.write(message.getBytes());
-        }
-    }
 }

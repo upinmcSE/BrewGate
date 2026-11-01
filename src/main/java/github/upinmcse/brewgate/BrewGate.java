@@ -1,14 +1,16 @@
 package github.upinmcse.brewgate;
 
-import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import github.upinmcse.brewgate.config.ConsulConfigManager;
 import github.upinmcse.brewgate.config.GatewayConfig;
+import github.upinmcse.brewgate.config.RedisConfig;
 import github.upinmcse.brewgate.config.ServiceConfig;
 import github.upinmcse.brewgate.handler.ReverseProxyHandler;
+import github.upinmcse.brewgate.helper.GatewayHelper;
 import github.upinmcse.brewgate.loadbalancer.ServerPool;
 import github.upinmcse.brewgate.middleware.auth.JwtAuthMiddleware;
+import github.upinmcse.brewgate.middleware.ratelimiter.QuotaMiddleware;
 import github.upinmcse.brewgate.router.RouterState;
 import org.kiwiproject.consul.Consul;
 import org.slf4j.Logger;
@@ -16,13 +18,12 @@ import org.slf4j.LoggerFactory;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.Constructor;
+import redis.clients.jedis.DefaultJedisClientConfig;
+import redis.clients.jedis.RedisClient;
 
 import java.io.FileInputStream;
-import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.InetSocketAddress;
-import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -35,6 +36,7 @@ public class BrewGate {
 
     private static final Logger log = LoggerFactory.getLogger(BrewGate.class);
     private static final AtomicReference<RouterState> globalRouter = new AtomicReference<>();
+    private static RedisClient redisClient;
 
     public static void main(String[] args) throws Exception {
         log.info("BrewGate !");
@@ -42,7 +44,7 @@ public class BrewGate {
         Yaml yaml = new Yaml(new Constructor(GatewayConfig.class, new LoaderOptions()));
         GatewayConfig gatewayConfig;
 
-        try(InputStream inputStream = new FileInputStream("src/main/resources/application.yaml")){
+        try (InputStream inputStream = new FileInputStream("src/main/resources/application.yaml")) {
             gatewayConfig = yaml.load(inputStream);
         }
 
@@ -59,6 +61,10 @@ public class BrewGate {
         try (ConsulConfigManager configManager = new ConsulConfigManager(consul)) {
 
             currentConfig = configManager.loadInitialConfig(ConsulConfigManager.DEFAULT_CONFIG_KEY);
+
+            if (currentConfig.getRedis() != null && currentConfig.getRedis().getAddress() != null) {
+                initRedis(currentConfig.getRedis());
+            }
 
             RouterState initialRouter = buildRouter(currentConfig, consul);
             globalRouter.set(initialRouter);
@@ -81,7 +87,7 @@ public class BrewGate {
         server.createContext("/", exchange -> {
             RouterState currentRouter = globalRouter.get();
             if (currentRouter == null) {
-                sendError(exchange, 503, "503 Service Unavailable: Gateway is initializing");
+                GatewayHelper.sendErrorResponse(exchange, 503, "503 Service Unavailable: Gateway is initializing");
                 return;
             }
 
@@ -90,9 +96,10 @@ public class BrewGate {
             if (handler != null) {
                 handler.handle(exchange);
             } else {
-                sendError(exchange, 404, "404 Not Found: No matching route for " + path);
+                GatewayHelper.sendErrorResponse(exchange, 404, "404 Not Found: No matching route for " + path);
             }
         });
+
         log.info("BrewGate listening on port :{}", port);
         server.start();
     }
@@ -103,7 +110,7 @@ public class BrewGate {
 
         // Middleware
         JwtAuthMiddleware jwtAuthMiddleware = null;
-        if(gatewayConfig.getAuthentication() != null && gatewayConfig.getAuthentication().isEnabled()){
+        if (gatewayConfig.getAuthentication() != null && gatewayConfig.getAuthentication().isEnabled()) {
             jwtAuthMiddleware = new JwtAuthMiddleware(gatewayConfig.getAuthentication());
         }
 
@@ -118,7 +125,19 @@ public class BrewGate {
 
                 HttpHandler proxyHandler = new ReverseProxyHandler(pool);
 
-                if(jwtAuthMiddleware != null){
+                if (svc.getQuota() != null && svc.getQuota().isEnabled()) {
+                    if (redisClient == null) {
+                        throw new IllegalStateException("Service '" + svc.getName() + "' has quota enabled, but Redis is not configured!");
+                    }
+                    if (jwtAuthMiddleware == null) {
+                        throw new IllegalStateException("Service '" + svc.getName() + "' has quota enabled, but Authentication is disabled. Quota requires User ID!");
+                    }
+                    proxyHandler = new QuotaMiddleware(svc.getName(), svc.getQuota(), redisClient).apply(proxyHandler);
+                    log.info("Enabled Quota for service '{}': Limit {} req/{}",
+                            svc.getName(), svc.getQuota().getLimit(), svc.getQuota().getPeriod());
+                }
+
+                if (jwtAuthMiddleware != null) {
                     proxyHandler = jwtAuthMiddleware.apply(proxyHandler);
                 }
 
@@ -130,11 +149,24 @@ public class BrewGate {
         return state;
     }
 
-    private static void sendError(HttpExchange exchange, int status, String msg) throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", "text/plain");
-        exchange.sendResponseHeaders(status, msg.getBytes().length);
-        try (OutputStream os = exchange.getResponseBody()) {
-            os.write(msg.getBytes());
+    private static void initRedis(RedisConfig redisCfg) {
+        String[] parts = redisCfg.getAddress().split(":");
+        String host = parts[0];
+        int port = parts.length > 1 ? Integer.parseInt(parts[1]) : 6379;
+
+        var configBuilder = DefaultJedisClientConfig.builder()
+                .connectionTimeoutMillis(2000)
+                .socketTimeoutMillis(2000)
+                .database(redisCfg.getDb());
+        if (redisCfg.getPassword() != null && !redisCfg.getPassword().isBlank()) {
+            configBuilder.password(redisCfg.getPassword());
         }
+
+        redisClient = RedisClient.builder()
+                .hostAndPort(host, port)
+                .clientConfig(configBuilder.build())
+                .build();
+
+        log.info("Connected to Redis at {}:{} (DB: {}) using Jedis 8 RedisClient", host, port, redisCfg.getDb());
     }
 }

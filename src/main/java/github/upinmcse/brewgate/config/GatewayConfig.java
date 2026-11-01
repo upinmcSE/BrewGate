@@ -6,6 +6,7 @@ public class GatewayConfig {
     private String gatewayPort;
     private List<ServiceConfig> services;
     private AuthConfig authentication;
+    private RedisConfig redis;
 
     public GatewayConfig(){}
 
@@ -33,7 +34,16 @@ public class GatewayConfig {
     public AuthConfig getAuthentication() {
         return authentication;
     }
+
     public void setAuthentication(AuthConfig authentication) {
         this.authentication = authentication;
+    }
+
+    public RedisConfig getRedis() {
+        return redis;
+    }
+
+    public void setRedis(RedisConfig redis) {
+        this.redis = redis;
     }
 }

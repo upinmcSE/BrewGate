@@ -3,11 +3,21 @@ services:
   - name: "user-service"
     path: "/users/"
     consulServiceName: "user-service"
+    quota:
+      enabled: true
+      limit: 5
+      period: "1m"
   - name: "product-service"
     path: "/products/"
     consulServiceName: "product-service"
+    quota:
+      enabled: false
 authentication:
   enabled: true
   publicKeyPath: "config/public.pem"
   expectedIssuer: "" #"http://localhost:8080/realms/master"
   #jwksUrl: "http://localhost:8080/realms/master/protocol/openid-connect/certs"
+redis:
+  address: "redis:6379"
+  password: ""
+  db: 0
