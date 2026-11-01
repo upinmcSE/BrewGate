@@ -8,6 +8,7 @@ import github.upinmcse.brewgate.config.GatewayConfig;
 import github.upinmcse.brewgate.config.ServiceConfig;
 import github.upinmcse.brewgate.handler.ReverseProxyHandler;
 import github.upinmcse.brewgate.loadbalancer.ServerPool;
+import github.upinmcse.brewgate.middleware.auth.JwtAuthMiddleware;
 import github.upinmcse.brewgate.router.RouterState;
 import org.kiwiproject.consul.Consul;
 import org.slf4j.Logger;
@@ -96,12 +97,18 @@ public class BrewGate {
         server.start();
     }
 
-    private static RouterState buildRouter(GatewayConfig config, Consul consul) {
+    private static RouterState buildRouter(GatewayConfig gatewayConfig, Consul consul) {
         log.info("Building new routing state...");
         RouterState state = new RouterState();
 
-        if (config.getServices() != null) {
-            for (ServiceConfig svc : config.getServices()) {
+        // Middleware
+        JwtAuthMiddleware jwtAuthMiddleware = null;
+        if(gatewayConfig.getAuthentication() != null && gatewayConfig.getAuthentication().isEnabled()){
+            jwtAuthMiddleware = new JwtAuthMiddleware(gatewayConfig.getAuthentication());
+        }
+
+        if (gatewayConfig.getServices() != null) {
+            for (ServiceConfig svc : gatewayConfig.getServices()) {
                 if (svc.getConsulServiceName() == null || svc.getConsulServiceName().isBlank()) {
                     continue;
                 }
@@ -109,7 +116,12 @@ public class BrewGate {
                 ServerPool pool = new ServerPool();
                 pool.startConsulWatcher(consul, svc.getConsulServiceName());
 
-                ReverseProxyHandler proxyHandler = new ReverseProxyHandler(pool);
+                HttpHandler proxyHandler = new ReverseProxyHandler(pool);
+
+                if(jwtAuthMiddleware != null){
+                    proxyHandler = jwtAuthMiddleware.apply(proxyHandler);
+                }
+
                 state.addRoute(svc.getPath(), proxyHandler, pool);
 
                 log.info("Registered route: {} -> Consul Service: '{}'", svc.getPath(), svc.getConsulServiceName());

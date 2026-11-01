@@ -4,6 +4,8 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import github.upinmcse.brewgate.loadbalancer.Backend;
 import github.upinmcse.brewgate.loadbalancer.ServerPool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -16,14 +18,13 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.logging.Logger;
 
 public class ReverseProxyHandler implements HttpHandler {
 
     private HttpClient httpClient;
     private ServerPool serverPool;
 
-    private static final Logger LOG = Logger.getLogger(ReverseProxyHandler.class.getName());
+    private static final Logger log = LoggerFactory.getLogger(ReverseProxyHandler.class);
 
     private static final Set<String> HOP_BY_HOP_HEADERS = Set.of(
             "connection",
@@ -51,7 +52,7 @@ public class ReverseProxyHandler implements HttpHandler {
     public void handle(HttpExchange exchange) throws IOException {
         Backend backend = serverPool.getNextBackend();
         if (backend == null) {
-            LOG.warning("[Proxy] No healthy backends available for this route!");
+            log.warn("No healthy backends available for path: {}", exchange.getRequestURI().getPath());
             sendErrorResponse(exchange, 503, "503 Service Unavailable: No healthy backends");
             return;
         }
@@ -66,12 +67,12 @@ public class ReverseProxyHandler implements HttpHandler {
 
             writeBackendResponse(backendResponse, exchange);
 
-            LOG.info(String.format("[Proxy] %s %s -> %s [%d]%n",
+            log.info("Forwarded {} {} -> {} [{}]",
                     backendRequest.method(), exchange.getRequestURI().getPath(),
-                    backendRequest.uri(), backendResponse.statusCode()));
+                    backend.getUri(), backendResponse.statusCode());
 
         }catch (Exception e){
-            LOG.warning(String.format("[Passive Health Check] Backend %s failed: %s. Marking as DEAD.%n", backend.getUri(), e.getMessage()));
+            log.error("Backend {} connection failed: {}. Marking as DEAD.", backend.getUri(), e.getMessage());
             backend.setAlive(false);
             sendErrorResponse(exchange, 502, "502 Bad Gateway: " + e.getMessage());
         }
@@ -105,8 +106,14 @@ public class ReverseProxyHandler implements HttpHandler {
                 }
             }
         }
+
         String clientIp = exchange.getRemoteAddress().getAddress().getHostAddress();
         requestBuilder.header("X-Forwarded-For", clientIp);
+
+        Object userId = exchange.getAttribute("userID");
+        if (userId != null) {
+            requestBuilder.header("X-User-ID", userId.toString());
+        }
         return requestBuilder.build();
     }
 

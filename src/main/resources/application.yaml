@@ -6,3 +6,8 @@ services:
   - name: "product-service"
     path: "/products/"
     consulServiceName: "product-service"
+authentication:
+  enabled: true
+  publicKeyPath: "config/public.pem"
+  expectedIssuer: "" #"http://localhost:8080/realms/master"
+  #jwksUrl: "http://localhost:8080/realms/master/protocol/openid-connect/certs"

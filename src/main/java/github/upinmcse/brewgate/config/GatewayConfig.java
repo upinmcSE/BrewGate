@@ -5,6 +5,7 @@ import java.util.List;
 public class GatewayConfig {
     private String gatewayPort;
     private List<ServiceConfig> services;
+    private AuthConfig authentication;
 
     public GatewayConfig(){}
 
@@ -27,5 +28,12 @@ public class GatewayConfig {
 
     public void setServices(List<ServiceConfig> services) {
         this.services = services;
+    }
+
+    public AuthConfig getAuthentication() {
+        return authentication;
+    }
+    public void setAuthentication(AuthConfig authentication) {
+        this.authentication = authentication;
     }
 }
