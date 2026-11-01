@@ -10,8 +10,11 @@ import github.upinmcse.brewgate.handler.ReverseProxyHandler;
 import github.upinmcse.brewgate.helper.GatewayHelper;
 import github.upinmcse.brewgate.loadbalancer.ServerPool;
 import github.upinmcse.brewgate.middleware.auth.JwtAuthMiddleware;
+import github.upinmcse.brewgate.middleware.metric.MetricsMiddleware;
 import github.upinmcse.brewgate.middleware.ratelimiter.QuotaMiddleware;
 import github.upinmcse.brewgate.router.RouterState;
+import io.micrometer.prometheusmetrics.PrometheusConfig;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import org.kiwiproject.consul.Consul;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,7 +26,9 @@ import redis.clients.jedis.RedisClient;
 
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -37,9 +42,12 @@ public class BrewGate {
     private static final Logger log = LoggerFactory.getLogger(BrewGate.class);
     private static final AtomicReference<RouterState> globalRouter = new AtomicReference<>();
     private static RedisClient redisClient;
+    private static PrometheusMeterRegistry prometheusMeterRegistry;
 
     public static void main(String[] args) throws Exception {
         log.info("BrewGate !");
+
+        prometheusMeterRegistry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
 
         Yaml yaml = new Yaml(new Constructor(GatewayConfig.class, new LoaderOptions()));
         GatewayConfig gatewayConfig;
@@ -84,6 +92,25 @@ public class BrewGate {
         int port = Integer.parseInt(currentConfig.getGatewayPort());
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+
+        // Endpoint /metrics
+        server.createContext("/metrics", exchange -> {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(405, -1);
+                return;
+            }
+            String scrapeResponse = prometheusMeterRegistry.scrape();
+            byte[] responseBytes = scrapeResponse.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+            exchange.sendResponseHeaders(200, responseBytes.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(responseBytes);
+            }
+        });
+
+        log.info("Prometheus metrics endpoint exposed at http://localhost:{}/metrics", port);
+
+        // Dynamic Router Handler
         server.createContext("/", exchange -> {
             RouterState currentRouter = globalRouter.get();
             if (currentRouter == null) {
@@ -123,8 +150,10 @@ public class BrewGate {
                 ServerPool pool = new ServerPool();
                 pool.startConsulWatcher(consul, svc.getConsulServiceName());
 
+                // 1. Innermost layer: ReverseProxy forwards the request to the backend
                 HttpHandler proxyHandler = new ReverseProxyHandler(pool);
 
+                // 2. Quota layer: rate limiting per user
                 if (svc.getQuota() != null && svc.getQuota().isEnabled()) {
                     if (redisClient == null) {
                         throw new IllegalStateException("Service '" + svc.getName() + "' has quota enabled, but Redis is not configured!");
@@ -137,9 +166,13 @@ public class BrewGate {
                             svc.getName(), svc.getQuota().getLimit(), svc.getQuota().getPeriod());
                 }
 
+                // 3. JWT Auth layer: verify the RS256 signature and extract the user ID
                 if (jwtAuthMiddleware != null) {
                     proxyHandler = jwtAuthMiddleware.apply(proxyHandler);
                 }
+
+                // 4. Outermost layer: MetricsMiddleware measures total latency and the resulting HTTP status
+                proxyHandler = new MetricsMiddleware(svc.getName(), prometheusMeterRegistry).apply(proxyHandler);
 
                 state.addRoute(svc.getPath(), proxyHandler, pool);
 

@@ -74,6 +74,14 @@
             <version>8.1.0-beta2</version>
             <scope>compile</scope>
         </dependency>
+
+        <!-- Source: https://mvnrepository.com/artifact/io.micrometer/micrometer-registry-prometheus -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+            <version>1.17.2</version>
+            <scope>compile</scope>
+        </dependency>
     </dependencies>
 
     <build>
