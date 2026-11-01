@@ -13,3 +13,11 @@ services:
     command: "agent -dev -client 0.0.0.0"
     networks:
       - brew-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - brew-net
